@@ -1,102 +1,158 @@
 # hilma-mcp
 
-MCP (Model Context Protocol) server for Finnish public procurement notices — [hankintailmoitukset.fi](https://hankintailmoitukset.fi) (Hilma).
+MCP (Model Context Protocol) -serveri Suomen julkisille hankintailmoituksille — [hankintailmoitukset.fi](https://hankintailmoitukset.fi) (Hilma).
 
-Allows Claude and other MCP-compatible AI assistants to search and retrieve Finnish public procurement notices directly.
+Mahdollistaa hankintailmoitusten haun suoraan Claude-assistentista ilman erillistä selainta.
 
-## Tools
+> **Kieliversio:** Ohjeet suomeksi alla. English instructions further down.
 
-### `search_notices`
+---
 
-Search procurement notices with flexible filters:
+## Vaatimukset
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `search` | string | Free text search in title and description. Use `"*"` for all. |
-| `cpv_codes` | string[] | CPV code filter, e.g. `["71200000", "72000000"]`. Multiple codes use OR logic. |
-| `notice_type` | string | `ContractNotices` \| `ContractAwardNotices` \| `PlanNotices` |
-| `procurement_type` | string | `services` \| `works` \| `supplies` |
-| `procedure_type` | string | `open` \| `restricted` \| `negotiated` |
-| `days` | number | Limit to notices published in the last N days |
-| `hours` | number | Limit to notices published in the last N hours |
-| `top` | number | Max results to return (1–100, default 20) |
-| `skip` | number | Skip first N results (pagination) |
-| `order_by` | string | Sort order, e.g. `"datePublished desc"` |
+- [Node.js](https://nodejs.org/) versio 18 tai uudempi
+- Claude Desktop tai Claude Code (MCP-tuki)
+- Hilma AVP API -avain (ks. alla)
 
-### `get_notice`
+---
 
-Retrieve full eForms XML data for a single notice by its numeric ID.
+## Asennus
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `notice_id` | number | Numeric notice ID (noticeId) from Hilma |
+### 1. Kloonaa repo
 
-## Installation
+```bash
+git clone https://github.com/SINUN-ORG/hilma-mcp.git
+cd hilma-mcp
+```
+
+### 2. Asenna riippuvuudet ja buildaa
 
 ```bash
 npm install
 npm run build
 ```
 
-## Running
+Tämä luo `dist/index.js`-tiedoston, jota Claude ajaa.
 
-```bash
-npm start
-# or directly:
-node dist/index.js
-```
+### 3. Lisää Claude-konfiguraatioon
 
-## Configuration
+Avaa Claude Desktopin konfiguraatiotiedosto:
 
-### API Key
+| Käyttöjärjestelmä | Polku |
+|-------------------|-------|
+| **macOS** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Windows** | `%APPDATA%\Claude\claude_desktop_config.json` |
 
-The server uses a default API key for the Hilma AVP API. You can override it with an environment variable:
-
-```bash
-HILMA_API_KEY=your_key_here node dist/index.js
-```
-
-Get your own API key at: https://hns-hilma-prod-apim.developer.azure-api.net/
-
-## Adding to Claude Desktop / Claude Code
-
-Add this to your MCP config (`claude_desktop_config.json` or `.claude/mcp.json`):
+Lisää tai muokkaa `mcpServers`-osiota:
 
 ```json
 {
   "mcpServers": {
     "hilma": {
       "command": "node",
-      "args": ["/absolute/path/to/hilma-mcp/dist/index.js"],
+      "args": ["/ABSOLUUTTINEN/POLKU/hilma-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+**Tärkeää:** Korvaa `/ABSOLUUTTINEN/POLKU/hilma-mcp` oikealla polulla omalla koneellasi. Esimerkiksi:
+- macOS: `/Users/sinunnimesi/hilma-mcp/dist/index.js`
+- Windows: `C:\\Users\\sinunnimesi\\hilma-mcp\\dist\\index.js`
+
+### 4. Käynnistä Claude uudelleen
+
+Hilma ilmestyy connectors-listaan uudelleenkäynnistyksen jälkeen.
+
+---
+
+## API-avain
+
+Serverissä on sisäänrakennettu oletusavain testausta varten. **Jos aiot käyttää tuotannossa tai jakaa eteenpäin, hanki oma avain:**
+
+1. Rekisteröidy osoitteessa: https://hns-hilma-prod-apim.developer.azure-api.net/
+2. Aseta avain ympäristömuuttujana:
+
+```json
+{
+  "mcpServers": {
+    "hilma": {
+      "command": "node",
+      "args": ["/polku/hilma-mcp/dist/index.js"],
       "env": {
-        "HILMA_API_KEY": "your_key_here"
+        "HILMA_API_KEY": "OMA-AVAIMESI-TÄHÄN"
       }
     }
   }
 }
 ```
 
-Or with `npx` if published to npm:
+---
+
+## Työkalut
+
+### `search_notices` — Hankintailmoitusten haku
+
+| Parametri | Tyyppi | Kuvaus |
+|-----------|--------|--------|
+| `search` | string | Vapaatekstihaku. `"*"` = kaikki. |
+| `cpv_codes` | string[] | CPV-koodit, esim. `["71200000", "72000000"]`. OR-logiikka. |
+| `notice_type` | string | `ContractNotices` / `ContractAwardNotices` / `PlanNotices` |
+| `procurement_type` | string | `services` / `works` / `supplies` |
+| `procedure_type` | string | `open` / `restricted` / `negotiated` |
+| `days` | number | Viimeiset N päivää |
+| `hours` | number | Viimeiset N tuntia |
+| `top` | number | Max tuloksia (1–100, oletus 20) |
+
+### `get_notice` — Yksittäinen ilmoitus
+
+| Parametri | Tyyppi | Kuvaus |
+|-----------|--------|--------|
+| `notice_id` | number | Ilmoituksen numeerinen ID |
+
+---
+
+## API-viite
+
+Perustuu viralliseen [Hilma API](https://github.com/Hankintailmoitukset/hilma-api) -dokumentaatioon.
+
+- Hakuendpoint: `POST https://api.hankintailmoitukset.fi/avp/eformnotices/docs/search`
+- Yksittäinen ilmoitus: `GET https://api.hankintailmoitukset.fi/avp/eformnotices/docs/{noticeId}`
+- Autentikointi: `Ocp-Apim-Subscription-Key` -header
+
+---
+
+## English
+
+### Quick install
+
+```bash
+git clone https://github.com/YOUR-ORG/hilma-mcp.git
+cd hilma-mcp
+npm install && npm run build
+```
+
+Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
   "mcpServers": {
     "hilma": {
-      "command": "npx",
-      "args": ["hilma-mcp"]
+      "command": "node",
+      "args": ["/absolute/path/to/hilma-mcp/dist/index.js"]
     }
   }
 }
 ```
 
-## API Reference
+Restart Claude. The Hilma connector will appear in the connectors list.
 
-Based on the [Hilma API](https://github.com/Hankintailmoitukset/hilma-api).
+### Own API key
 
-- Search endpoint: `POST https://api.hankintailmoitukset.fi/avp/eformnotices/docs/search`
-- Notice endpoint: `GET https://api.hankintailmoitukset.fi/avp/eformnotices/docs/{noticeId}`
-- Authentication: `Ocp-Apim-Subscription-Key` header
+A default key is bundled for testing. For production use, register at https://hns-hilma-prod-apim.developer.azure-api.net/ and pass your key via the `HILMA_API_KEY` environment variable in the MCP config.
 
-## License
+---
+
+## Lisenssi / License
 
 MIT
