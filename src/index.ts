@@ -8,12 +8,15 @@
  *  - get_notice: Get full details for a single notice by ID
  */
 
+import * as dotenv from "dotenv";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+
+dotenv.config();
 
 // ---------------------------------------------------------------------------
 // Config
@@ -24,12 +27,17 @@ const HILMA_SEARCH_URL =
 const HILMA_NOTICE_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs";
 
-// API key — can be overridden via environment variable HILMA_API_KEY
-const DEFAULT_API_KEY = "22d29026f798429faf45f6f1b503ef7a";
-const API_KEY = process.env.HILMA_API_KEY ?? DEFAULT_API_KEY;
+const API_KEY = process.env.HILMA_API_KEY;
+if (!API_KEY) {
+  process.stderr.write(
+    "Virhe: HILMA_API_KEY puuttuu. Lisää se .env-tiedostoon tai ympäristömuuttujana.\n" +
+    "Rekisteröi avain: https://hns-hilma-prod-apim.developer.azure-api.net/\n"
+  );
+  process.exit(1);
+}
 
 const HEADERS: Record<string, string> = {
-  "Ocp-Apim-Subscription-Key": API_KEY,
+  "Ocp-Apim-Subscription-Key": API_KEY!,
   "Content-Type": "application/json",
 };
 
@@ -200,7 +208,7 @@ async function searchNotices(params: SearchParams): Promise<string> {
 async function getNotice(noticeId: number): Promise<string> {
   const res = await fetch(`${HILMA_NOTICE_URL}/${noticeId}`, {
     headers: {
-      "Ocp-Apim-Subscription-Key": API_KEY,
+      "Ocp-Apim-Subscription-Key": API_KEY!,
       Accept: "application/xml",
     },
   });

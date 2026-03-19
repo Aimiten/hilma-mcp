@@ -34,7 +34,23 @@ npm run build
 
 Tämä luo `dist/index.js`-tiedoston, jota Claude ajaa.
 
-### 3. Lisää Claude-konfiguraatioon
+### 3. Luo .env-tiedosto
+
+```bash
+cp .env.example .env
+```
+
+Avaa `.env` tekstieditorissa ja lisää oma API-avaimesi:
+
+```
+HILMA_API_KEY=oma-avaimesi-tähän
+```
+
+Hanki avain ilmaiseksi: https://hns-hilma-prod-apim.developer.azure-api.net/
+
+> **Huom:** `.env`-tiedostoa ei koskaan commitoida GitHubiin — se on jo `.gitignore`:ssa.
+
+### 4. Lisää Claude-konfiguraatioon
 
 Avaa Claude Desktopin konfiguraatiotiedosto:
 
@@ -68,24 +84,27 @@ Hilma ilmestyy connectors-listaan uudelleenkäynnistyksen jälkeen.
 
 ## API-avain
 
-Serverissä on sisäänrakennettu oletusavain testausta varten. **Jos aiot käyttää tuotannossa tai jakaa eteenpäin, hanki oma avain:**
+Serveri **vaatii** oman API-avaimen — sitä ei ole bundlattu koodiin tietoturvasyistä.
 
-1. Rekisteröidy osoitteessa: https://hns-hilma-prod-apim.developer.azure-api.net/
-2. Aseta avain ympäristömuuttujana:
-
-```json
-{
-  "mcpServers": {
-    "hilma": {
-      "command": "node",
-      "args": ["/polku/hilma-mcp/dist/index.js"],
-      "env": {
-        "HILMA_API_KEY": "OMA-AVAIMESI-TÄHÄN"
-      }
-    }
-  }
-}
-```
+1. Rekisteröidy ilmaiseksi: https://hns-hilma-prod-apim.developer.azure-api.net/
+2. Lisää avain `.env`-tiedostoon (suositeltu):
+   ```
+   HILMA_API_KEY=oma-avaimesi-tähän
+   ```
+3. Tai anna se suoraan Claude-konfiguraatiossa:
+   ```json
+   {
+     "mcpServers": {
+       "hilma": {
+         "command": "node",
+         "args": ["/polku/hilma-mcp/dist/index.js"],
+         "env": {
+           "HILMA_API_KEY": "oma-avaimesi-tähän"
+         }
+       }
+     }
+   }
+   ```
 
 ---
 
@@ -127,10 +146,13 @@ Perustuu viralliseen [Hilma API](https://github.com/Hankintailmoitukset/hilma-ap
 ### Quick install
 
 ```bash
-git clone https://github.com/YOUR-ORG/hilma-mcp.git
+git clone https://github.com/Aimiten/hilma-mcp.git
 cd hilma-mcp
 npm install && npm run build
+cp .env.example .env   # then add your API key to .env
 ```
+
+Get a free API key at: https://hns-hilma-prod-apim.developer.azure-api.net/
 
 Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
@@ -146,10 +168,6 @@ Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_deskt
 ```
 
 Restart Claude. The Hilma connector will appear in the connectors list.
-
-### Own API key
-
-A default key is bundled for testing. For production use, register at https://hns-hilma-prod-apim.developer.azure-api.net/ and pass your key via the `HILMA_API_KEY` environment variable in the MCP config.
 
 ---
 
