@@ -26,6 +26,10 @@ dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const HILMA_SEARCH_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs/search";
+// NOTE: get_notice requires the separate "avp-read-eforms-api" product subscription.
+// The standard "avp-read" (search) subscription only covers search_notices.
+// Register at: https://hns-hilma-prod-apim.developer.azure-api.net/
+// → Products → avp-read-eforms → Subscribe
 const HILMA_NOTICE_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs";
 
@@ -216,8 +220,17 @@ async function getNotice(noticeId: number): Promise<string> {
   });
 
   if (!res.ok) {
+    if (res.status === 404 || res.status === 401 || res.status === 403) {
+      throw new Error(
+        `Hilma API: get_notice vaatii erillisen "avp-read-eforms-api" -tilauksen ` +
+        `(nykyinen avain kattaa vain search_notices-haun). ` +
+        `Rekisteröi lisätilaus: https://hns-hilma-prod-apim.developer.azure-api.net/ ` +
+        `→ Products → avp-read-eforms → Subscribe. ` +
+        `(HTTP ${res.status} noticeId=${noticeId})`
+      );
+    }
     throw new Error(
-      `Hilma API error: ${res.status} ${res.statusText} — ilmoitusta ${noticeId} ei löydy tai API-avain ei ole voimassa.`
+      `Hilma API error: ${res.status} ${res.statusText} — noticeId=${noticeId}`
     );
   }
 
