@@ -36,11 +36,11 @@ dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const HILMA_SEARCH_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs/search";
-// get_notice_full requires the separate "avp-read-eforms-api" product subscription.
-// Register at: https://hns-hilma-prod-apim.developer.azure-api.net/
-// → Products → avp-read-eforms → Subscribe → copy key to HILMA_READ_API_KEY in .env
-const HILMA_NOTICE_URL =
-  "https://api.hankintailmoitukset.fi/avp/eformnotices/docs";
+// get_notice_full käyttää EForms Read API:a — sama avp-read -tilaus kattaa tämän.
+// Endpoint: GET /avp-eforms/external-read/v1/notice/{noticeId}
+// Palauttaa JSON:ia jossa eForm-kenttä on Base64-enkoodattu XML.
+const HILMA_EFORMS_URL =
+  "https://api.hankintailmoitukset.fi/avp-eforms/external-read/v1/notice";
 
 const API_KEY = process.env.HILMA_API_KEY;
 if (!API_KEY) {
@@ -259,29 +259,36 @@ async function getNoticeSummary(noticeId: number): Promise<string> {
 async function getNoticeFullXml(noticeId: number): Promise<string> {
   const key = READ_API_KEY || API_KEY;
 
-  const res = await fetch(`${HILMA_NOTICE_URL}/${noticeId}`, {
+  // EForms Read API: GET /avp-eforms/external-read/v1/notice/{noticeId}
+  // Palauttaa JSON:n jossa eForm-kenttä on Base64-enkoodattu eForms XML
+  const res = await fetch(`${HILMA_EFORMS_URL}/${noticeId}`, {
     headers: {
       "Ocp-Apim-Subscription-Key": key!,
-      Accept: "application/xml",
+      "Accept": "application/json",
     },
   });
 
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       throw new Error(
-        `Hilma API: get_notice_full vaatii erillisen "avp-read-eforms-api" -tilauksen. ` +
-        `Nykyinen HILMA_API_KEY kattaa vain haun. ` +
-        `Rekisteröi lisätilaus: https://hns-hilma-prod-apim.developer.azure-api.net/ ` +
-        `→ Products → avp-read-eforms → Subscribe → kopioi avain .env:iin nimellä HILMA_READ_API_KEY.`
+        `Hilma API 403: Tarkista että HILMA_API_KEY on voimassa ja tilauksesi kattaa avp-read-eforms-api:n. ` +
+        `Rekisteröi: https://hns-hilma-prod-apim.developer.azure-api.net/ → Products → avp-read-eforms`
       );
     }
     if (res.status === 404) {
-      throw new Error(`Ilmoitusta noticeId=${noticeId} ei löydy (404). Tarkista ID.`);
+      throw new Error(`Ilmoitusta noticeId=${noticeId} ei löydy EForms API:sta (404).`);
     }
-    throw new Error(`Hilma API error: ${res.status} ${res.statusText}`);
+    throw new Error(`Hilma EForms API error: ${res.status} ${res.statusText}`);
   }
 
-  const xml = await res.text();
+  const data = await res.json() as { id: number; procedureId?: number; eForm?: string };
+
+  if (!data.eForm) {
+    throw new Error(`Ilmoituksella ${noticeId} ei ole eForm XML:ää (kenttä puuttuu).`);
+  }
+
+  // Dekoodaa Base64 → XML
+  const xml = Buffer.from(data.eForm, "base64").toString("utf-8");
 
   // Poimii yhteystiedot BT-502 / BT-503 / BT-506 XML:stä
   const extractAll = (tag: string): string[] => {
@@ -300,7 +307,8 @@ async function getNoticeFullXml(noticeId: number): Promise<string> {
   const lines: string[] = [
     `## Ilmoitus ${noticeId} — täydet tiedot (eForms XML)`,
     "",
-    `**Hilma-linkki:** https://hankintailmoitukset.fi/fi/notice/${noticeId}`,
+    `**Hilma-linkki:** https://hankintailmoitukset.fi/fi/notice/${data.id}`,
+    `**ProcedureId:** ${data.procedureId ?? "?"}`,
     `**XML-koko:** ${Math.round(xml.length / 1024)} kt`,
     "",
   ];
@@ -459,7 +467,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            notice_id: { type: "number", description: "Ilmoituksen noticeId" },
+            notice_id: { description: "Ilmoituksen noticeId (numero)" },
           },
           required: ["notice_id"],
         },
@@ -473,7 +481,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            days: { type: "number", description: "Hae deadlinet seuraavan N päivän sisällä (esim. 7, 14, 30)" },
+            days: { description: "Hae deadlinet seuraavan N päivän sisällä (esim. 7, 14, 30)" },
             cpv_codes: { type: "array", items: { type: "string" }, description: "Rajaa CPV-koodeilla (valinnainen)" },
           },
           required: ["days"],
@@ -491,15 +499,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: await searchNotices(args as SearchParams) }] };
     }
     if (name === "get_notice_summary") {
-      const { notice_id } = args as { notice_id: number };
+      const notice_id = Number((args as any).notice_id);
       return { content: [{ type: "text", text: await getNoticeSummary(notice_id) }] };
     }
     if (name === "get_notice_full") {
-      const { notice_id } = args as { notice_id: number };
+      const notice_id = Number((args as any).notice_id);
       return { content: [{ type: "text", text: await getNoticeFullXml(notice_id) }] };
     }
     if (name === "get_expiring_soon") {
-      const { days, cpv_codes } = args as { days: number; cpv_codes?: string[] };
+      const days = Number((args as any).days);
+      const cpv_codes = (args as any).cpv_codes;
       return { content: [{ type: "text", text: await getExpiringSoon(days, cpv_codes) }] };
     }
 
