@@ -4,9 +4,19 @@
  * MCP server for Finnish public procurement notices (hankintailmoitukset.fi)
  *
  * Tools:
- *  - search_notices: Search procurement notices with filters
- *  - get_notice: Get full details for a single notice by ID
+ *  - search_notices:     Search procurement notices with filters
+ *  - get_notice_summary: Get a formatted summary of a single notice by ID (search API)
+ *  - get_notice_full:    Get full eForms XML incl. BT-502/503 contacts (requires avp-read-eforms-api)
+ *  - get_expiring_soon:  Get notices whose deadline falls within N days
  */
+
+// MCP stdio -yhteensopivuus: dotenv v17 tulostaa stdoutiin joka rikkoo JSON-protokollan
+const _origWrite = process.stdout.write.bind(process.stdout);
+(process.stdout as any).write = function(chunk: any, enc?: any, cb?: any): boolean {
+  const s = Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
+  if (s.startsWith("[dotenv")) { if (typeof enc === "function") enc(); else if (typeof cb === "function") cb(); return true; }
+  return _origWrite(chunk, enc, cb);
+};
 
 import * as dotenv from "dotenv";
 import * as path from "path";
@@ -26,10 +36,9 @@ dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const HILMA_SEARCH_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs/search";
-// NOTE: get_notice requires the separate "avp-read-eforms-api" product subscription.
-// The standard "avp-read" (search) subscription only covers search_notices.
+// get_notice_full requires the separate "avp-read-eforms-api" product subscription.
 // Register at: https://hns-hilma-prod-apim.developer.azure-api.net/
-// → Products → avp-read-eforms → Subscribe
+// → Products → avp-read-eforms → Subscribe → copy key to HILMA_READ_API_KEY in .env
 const HILMA_NOTICE_URL =
   "https://api.hankintailmoitukset.fi/avp/eformnotices/docs";
 
@@ -41,6 +50,9 @@ if (!API_KEY) {
   );
   process.exit(1);
 }
+
+// Erillinen avain get_notice_full:lle — valinnainen, toimii ilmankin (antaa selkeän virheen)
+const READ_API_KEY = process.env.HILMA_READ_API_KEY;
 
 const HEADERS: Record<string, string> = {
   "Ocp-Apim-Subscription-Key": API_KEY!,
@@ -82,6 +94,8 @@ interface HilmaNotice {
   estimatedValue?: number;
   eFormsId?: string;
   procedureId?: number;
+  procurementDocumentsUrl?: string;
+  sendingSystem?: string;
 }
 
 interface SearchResponse {
@@ -141,7 +155,7 @@ function formatNotice(n: HilmaNotice): string {
     );
   if (n.expirationDate)
     lines.push(
-      `**Tarjousaika päättyy:** ${new Date(n.expirationDate).toLocaleDateString("fi-FI")}`
+      `**Deadline:** ${new Date(n.expirationDate).toLocaleDateString("fi-FI")}`
     );
   if (n.mainType) lines.push(`**Tyyppi:** ${n.mainType}`);
   if (n.procurementTypeCode)
@@ -154,6 +168,8 @@ function formatNotice(n: HilmaNotice): string {
     lines.push(
       `**Arvioitu arvo:** ${n.estimatedValue.toLocaleString("fi-FI")} €`
     );
+  if (n.procurementDocumentsUrl)
+    lines.push(`**Tarjousportaali:** ${n.procurementDocumentsUrl}`);
   if (n.descriptionFi) {
     const desc =
       n.descriptionFi.length > 500
@@ -162,7 +178,7 @@ function formatNotice(n: HilmaNotice): string {
     lines.push(`**Kuvaus:** ${desc}`);
   }
   lines.push(
-    `**Linkki:** https://hankintailmoitukset.fi/fi/notice/${n.eFormsId ?? n.noticeId}`
+    `**Hilma-linkki:** https://hankintailmoitukset.fi/fi/notice/${n.eFormsId ?? n.noticeId}`
   );
   return lines.join("\n");
 }
@@ -180,6 +196,7 @@ async function searchNotices(params: SearchParams): Promise<string> {
     orderby: params.order_by ?? "datePublished desc",
     searchMode: "any",
     queryType: "simple",
+    select: "noticeId,titleFi,organisationNameFi,organisationNationalRegistrationNumber,cpvCodes,nutsCodes,datePublished,expirationDate,estimatedValue,procedureType,procurementTypeCode,mainType,eFormsId,procurementDocumentsUrl,sendingSystem,descriptionFi",
   };
   if (filter) body.filter = filter;
   if (params.skip) body.skip = params.skip;
@@ -211,68 +228,177 @@ async function searchNotices(params: SearchParams): Promise<string> {
   return summary.join("\n");
 }
 
-async function getNotice(noticeId: number): Promise<string> {
+async function getNoticeSummary(noticeId: number): Promise<string> {
+  // Hakee yksittäisen ilmoituksen search-API:n kautta (ei vaadi erillistä tilausta)
+  const body = {
+    search: "*",
+    filter: `noticeId eq ${noticeId}`,
+    top: 1,
+    select: "noticeId,titleFi,organisationNameFi,organisationNationalRegistrationNumber,cpvCodes,nutsCodes,datePublished,expirationDate,estimatedValue,procedureType,procurementTypeCode,mainType,eFormsId,procurementDocumentsUrl,sendingSystem,descriptionFi",
+  };
+
+  const res = await fetch(HILMA_SEARCH_URL, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Hilma API error: ${res.status} ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as SearchResponse;
+
+  if (data.value.length === 0) {
+    return `Ilmoitusta noticeId=${noticeId} ei löydy Hilmasta.`;
+  }
+
+  return formatNotice(data.value[0]);
+}
+
+async function getNoticeFullXml(noticeId: number): Promise<string> {
+  const key = READ_API_KEY || API_KEY;
+
   const res = await fetch(`${HILMA_NOTICE_URL}/${noticeId}`, {
     headers: {
-      "Ocp-Apim-Subscription-Key": API_KEY!,
+      "Ocp-Apim-Subscription-Key": key!,
       Accept: "application/xml",
     },
   });
 
   if (!res.ok) {
-    if (res.status === 404 || res.status === 401 || res.status === 403) {
+    if (res.status === 401 || res.status === 403) {
       throw new Error(
-        `Hilma API: get_notice vaatii erillisen "avp-read-eforms-api" -tilauksen ` +
-        `(nykyinen avain kattaa vain search_notices-haun). ` +
+        `Hilma API: get_notice_full vaatii erillisen "avp-read-eforms-api" -tilauksen. ` +
+        `Nykyinen HILMA_API_KEY kattaa vain haun. ` +
         `Rekisteröi lisätilaus: https://hns-hilma-prod-apim.developer.azure-api.net/ ` +
-        `→ Products → avp-read-eforms → Subscribe. ` +
-        `(HTTP ${res.status} noticeId=${noticeId})`
+        `→ Products → avp-read-eforms → Subscribe → kopioi avain .env:iin nimellä HILMA_READ_API_KEY.`
       );
     }
-    throw new Error(
-      `Hilma API error: ${res.status} ${res.statusText} — noticeId=${noticeId}`
-    );
+    if (res.status === 404) {
+      throw new Error(`Ilmoitusta noticeId=${noticeId} ei löydy (404). Tarkista ID.`);
+    }
+    throw new Error(`Hilma API error: ${res.status} ${res.statusText}`);
   }
 
   const xml = await res.text();
 
-  // Extract key fields from XML for a readable summary
-  const extract = (tag: string): string => {
-    const patterns = [
-      new RegExp(`<cbc:${tag}[^>]*>([^<]+)<\/cbc:${tag}>`, "i"),
-      new RegExp(`<cac:${tag}[^>]*>([^<]+)<\/cac:${tag}>`, "i"),
-    ];
-    for (const p of patterns) {
-      const m = xml.match(p);
-      if (m) return m[1].trim();
-    }
-    return "";
+  // Poimii yhteystiedot BT-502 / BT-503 / BT-506 XML:stä
+  const extractAll = (tag: string): string[] => {
+    const matches = xml.matchAll(new RegExp(`<cbc:${tag}[^>]*>([^<]+)<\\/cbc:${tag}>`, "gi"));
+    return [...matches].map(m => m[1].trim());
   };
 
-  // Extract document URLs
+  const contactNames  = extractAll("ContactName");
+  const contactEmails = extractAll("ElectronicMail");
+  const contactPhones = extractAll("Telephone");
+
+  // Tarjousportaalin URL:t
   const urlMatches = xml.matchAll(/<cbc:URI>([^<]+)<\/cbc:URI>/g);
-  const urls = [...urlMatches].map((m) => m[1]).filter((u) => u.startsWith("http"));
+  const urls = [...urlMatches].map(m => m[1]).filter(u => u.startsWith("http"));
 
   const lines: string[] = [
-    `## Ilmoitus ${noticeId}`,
+    `## Ilmoitus ${noticeId} — täydet tiedot (eForms XML)`,
     "",
-    `**Linkki:** https://hankintailmoitukset.fi/fi/notice/${noticeId}`,
+    `**Hilma-linkki:** https://hankintailmoitukset.fi/fi/notice/${noticeId}`,
+    `**XML-koko:** ${Math.round(xml.length / 1024)} kt`,
     "",
-    "### Raakadata (eForms XML) haettu onnistuneesti",
-    `XML-tiedoston koko: ${Math.round(xml.length / 1024)} kt`,
   ];
 
-  if (urls.length > 0) {
-    lines.push("", "### Tarjousportaalin linkit");
-    urls.slice(0, 5).forEach((u) => lines.push(`- ${u}`));
+  if (contactNames.length > 0 || contactEmails.length > 0) {
+    lines.push("### Yhteystiedot (BT-502/503/506)");
+    contactNames.forEach((n, i) => {
+      lines.push(`- **Nimi:** ${n}`);
+      if (contactEmails[i]) lines.push(`  **Sähköposti:** ${contactEmails[i]}`);
+      if (contactPhones[i]) lines.push(`  **Puhelin:** ${contactPhones[i]}`);
+    });
+    lines.push("");
   }
 
-  lines.push("", "### XML (ensimmäiset 3000 merkkiä)");
+  if (urls.length > 0) {
+    lines.push("### Tarjousportaalin linkit");
+    urls.slice(0, 5).forEach(u => lines.push(`- ${u}`));
+    lines.push("");
+  }
+
+  lines.push("### XML (ensimmäiset 4000 merkkiä)");
   lines.push("```xml");
-  lines.push(xml.slice(0, 3000));
+  lines.push(xml.slice(0, 4000));
   lines.push("```");
 
   return lines.join("\n");
+}
+
+async function getExpiringSoon(days: number, cpv_codes?: string[]): Promise<string> {
+  const now = new Date();
+  const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+
+  const filterParts: string[] = [
+    `expirationDate ge ${now.toISOString()}`,
+    `expirationDate le ${future.toISOString()}`,
+    `mainType eq 'ContractNotices'`,
+  ];
+
+  if (cpv_codes && cpv_codes.length > 0) {
+    const cpvPart = cpv_codes
+      .map(c => `search.ismatch('${c}', 'cpvCodes')`)
+      .join(" or ");
+    filterParts.push(`(${cpvPart})`);
+  }
+
+  const body = {
+    search: "*",
+    filter: filterParts.join(" and "),
+    top: 50,
+    count: true,
+    orderby: "expirationDate asc",
+    select: "noticeId,titleFi,organisationNameFi,cpvCodes,nutsCodes,datePublished,expirationDate,estimatedValue,procedureType,procurementTypeCode,mainType,eFormsId,procurementDocumentsUrl",
+  };
+
+  const res = await fetch(HILMA_SEARCH_URL, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Hilma API error: ${res.status} ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as SearchResponse;
+  const total = data["@odata.count"] ?? data.value.length;
+  const notices = data.value;
+
+  if (notices.length === 0) {
+    return `Ei ilmoituksia joiden deadline on seuraavan ${days} päivän sisällä.`;
+  }
+
+  const header = [
+    `## Deadlinet seuraavan ${days} päivän sisällä`,
+    `**${total} ilmoitusta** — järjestetty deadlinen mukaan`,
+    "",
+  ];
+
+  const rows = notices.map(n => {
+    const dl = n.expirationDate
+      ? new Date(n.expirationDate).toLocaleDateString("fi-FI")
+      : "?";
+    const daysLeft = n.expirationDate
+      ? Math.ceil((new Date(n.expirationDate).getTime() - now.getTime()) / 86400000)
+      : "?";
+    const arvo = n.estimatedValue
+      ? `€${Math.round(n.estimatedValue).toLocaleString("fi-FI")}`
+      : "";
+    return [
+      `### ${n.noticeId}: ${n.titleFi ?? "(ei nimeä)"}`,
+      `**Tilaaja:** ${n.organisationNameFi ?? "?"} | **Deadline:** ${dl} (${daysLeft} pv) ${arvo}`,
+      `**Portaali:** ${n.procurementDocumentsUrl ?? "—"}`,
+      `**Hilma:** https://hankintailmoitukset.fi/fi/notice/${n.eFormsId ?? n.noticeId}`,
+      "",
+    ].join("\n");
+  });
+
+  return [...header, ...rows].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -280,15 +406,8 @@ async function getNotice(noticeId: number): Promise<string> {
 // ---------------------------------------------------------------------------
 
 const server = new Server(
-  {
-    name: "hilma-mcp",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
+  { name: "hilma-mcp", version: "1.1.0" },
+  { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -297,78 +416,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "search_notices",
         description:
-          "Hae hankintailmoituksia Hilmasta (hankintailmoitukset.fi). " +
-          "Tukee vapaatekstihakua, CPV-koodisuodatusta, aikarajausta, ilmoitustyypin valintaa ja menettelytyypin valintaa. " +
+          "Hae hankintailmoituksia Hilmasta. Tukee vapaatekstihakua, CPV-koodisuodatusta, " +
+          "aikarajausta, ilmoitustyypin ja menettelytyypin valintaa. " +
           "Palauttaa listauksen ilmoituksista otsikoineen, hankintayksikköineen ja määräaikoineen.",
         inputSchema: {
           type: "object",
           properties: {
-            search: {
-              type: "string",
-              description:
-                'Vapaatekstihaku ilmoituksen otsikosta ja kuvauksesta. Käytä "*" kaikkien hakemiseen.',
-            },
-            cpv_codes: {
-              type: "array",
-              items: { type: "string" },
-              description:
-                'CPV-koodit suodatukseen, esim. ["71200000", "72000000"]. Useampi koodi OR-logiikalla.',
-            },
-            notice_type: {
-              type: "string",
-              enum: ["ContractNotices", "ContractAwardNotices", "PlanNotices"],
-              description:
-                "Ilmoitustyyppi: ContractNotices=hankintailmoitukset, ContractAwardNotices=jälki-ilmoitukset, PlanNotices=ennakkoilmoitukset",
-            },
-            procurement_type: {
-              type: "string",
-              enum: ["services", "works", "supplies"],
-              description: "Hankintalaji: services=palvelut, works=urakat, supplies=tavarat",
-            },
-            procedure_type: {
-              type: "string",
-              enum: ["open", "restricted", "negotiated"],
-              description:
-                "Menettelytyyppi: open=avoin, restricted=rajoitettu, negotiated=neuvottelu",
-            },
-            days: {
-              type: "number",
-              description: "Rajaa ilmoitukset viimeiseen N päivään (esim. 7, 30, 90)",
-            },
-            hours: {
-              type: "number",
-              description: "Rajaa ilmoitukset viimeiseen N tuntiin (esim. 24, 48). Ohittaa days-parametrin.",
-            },
-            top: {
-              type: "number",
-              description: "Palautettavien tulosten maksimimäärä (1–100, oletus 20)",
-            },
-            skip: {
-              type: "number",
-              description: "Ohita N ensimmäistä tulosta (sivutus)",
-            },
-            order_by: {
-              type: "string",
-              description:
-                'Lajittelujärjestys, esim. "datePublished desc" tai "expirationDate asc"',
-            },
+            search: { type: "string", description: 'Vapaatekstihaku. Käytä "*" kaikkien hakemiseen.' },
+            cpv_codes: { type: "array", items: { type: "string" }, description: 'CPV-koodit, esim. ["71200000"]. OR-logiikalla.' },
+            notice_type: { type: "string", enum: ["ContractNotices", "ContractAwardNotices", "PlanNotices"], description: "Ilmoitustyyppi" },
+            procurement_type: { type: "string", enum: ["services", "works", "supplies"], description: "Hankintalaji" },
+            procedure_type: { type: "string", enum: ["open", "restricted", "negotiated"], description: "Menettelytyyppi" },
+            days: { type: "number", description: "Rajaa viimeiseen N päivään" },
+            hours: { type: "number", description: "Rajaa viimeiseen N tuntiin" },
+            top: { type: "number", description: "Max tulosmäärä (1–100, oletus 20)" },
+            skip: { type: "number", description: "Ohita N ensimmäistä (sivutus)" },
+            order_by: { type: "string", description: 'Lajittelu, esim. "expirationDate asc"' },
           },
         },
       },
       {
-        name: "get_notice",
+        name: "get_notice_summary",
         description:
-          "Hae yksittäisen hankintailmoituksen täydet tiedot Hilmasta ilmoituksen ID:llä (noticeId). " +
-          "Palauttaa eForms XML -datan ja tarjousportaalin linkit.",
+          "Hae yksittäisen ilmoituksen yhteenveto noticeId:llä. " +
+          "Käyttää search-APIa — ei vaadi erillistä tilausta. " +
+          "Palauttaa kaikki metatiedot: tilaaja, deadline, arvo, CPV, portaali-URL.",
         inputSchema: {
           type: "object",
           properties: {
-            notice_id: {
-              type: "number",
-              description: "Ilmoituksen numeerinen ID (noticeId) Hilmasta",
-            },
+            notice_id: { type: "number", description: "Ilmoituksen noticeId" },
           },
           required: ["notice_id"],
+        },
+      },
+      {
+        name: "get_notice_full",
+        description:
+          "Hae ilmoituksen täydet tiedot eForms XML -muodossa, mukaan lukien yhteystiedot " +
+          "(BT-502 nimi, BT-503 sähköposti, BT-506 puhelin) ja tarjousportaalin linkit. " +
+          "VAATII erillisen avp-read-eforms-api -tilauksen ja HILMA_READ_API_KEY .env:ssä. " +
+          "Rekisteröi: https://hns-hilma-prod-apim.developer.azure-api.net/ → avp-read-eforms",
+        inputSchema: {
+          type: "object",
+          properties: {
+            notice_id: { type: "number", description: "Ilmoituksen noticeId" },
+          },
+          required: ["notice_id"],
+        },
+      },
+      {
+        name: "get_expiring_soon",
+        description:
+          "Hae ilmoitukset joiden tarjousaika päättyy seuraavan N päivän sisällä. " +
+          "Järjestää deadlinen mukaan nousevaan järjestykseen. " +
+          "Hyödyllinen: 'mitä deadlineja on ensi viikolla', 'kiireellisimmät hankkeet'.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            days: { type: "number", description: "Hae deadlinet seuraavan N päivän sisällä (esim. 7, 14, 30)" },
+            cpv_codes: { type: "array", items: { type: "string" }, description: "Rajaa CPV-koodeilla (valinnainen)" },
+          },
+          required: ["days"],
         },
       },
     ],
@@ -380,23 +488,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     if (name === "search_notices") {
-      const result = await searchNotices(args as SearchParams);
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text", text: await searchNotices(args as SearchParams) }] };
     }
-
-    if (name === "get_notice") {
+    if (name === "get_notice_summary") {
       const { notice_id } = args as { notice_id: number };
-      const result = await getNotice(notice_id);
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text", text: await getNoticeSummary(notice_id) }] };
+    }
+    if (name === "get_notice_full") {
+      const { notice_id } = args as { notice_id: number };
+      return { content: [{ type: "text", text: await getNoticeFullXml(notice_id) }] };
+    }
+    if (name === "get_expiring_soon") {
+      const { days, cpv_codes } = args as { days: number; cpv_codes?: string[] };
+      return { content: [{ type: "text", text: await getExpiringSoon(days, cpv_codes) }] };
     }
 
     throw new Error(`Tuntematon työkalu: ${name}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text", text: `Virhe: ${message}` }],
-      isError: true,
-    };
+    return { content: [{ type: "text", text: `Virhe: ${message}` }], isError: true };
   }
 });
 
@@ -407,7 +517,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  // MCP servers communicate over stdio — no console.log here
 }
 
 main().catch((err) => {
