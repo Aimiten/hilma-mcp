@@ -313,14 +313,15 @@ async function getNoticeFullXml(noticeId: number): Promise<string> {
     "",
   ];
 
-  if (contactNames.length > 0 || contactEmails.length > 0) {
+  if (contactNames.length > 0 || contactEmails.length > 0 || contactPhones.length > 0) {
     lines.push("### Yhteystiedot (BT-502/503/506)");
-    contactNames.forEach((n, i) => {
-      lines.push(`- **Nimi:** ${n}`);
-      if (contactEmails[i]) lines.push(`  **Sähköposti:** ${contactEmails[i]}`);
-      if (contactPhones[i]) lines.push(`  **Puhelin:** ${contactPhones[i]}`);
-    });
-    lines.push("");
+    const count = Math.max(contactNames.length, contactEmails.length, contactPhones.length);
+    for (let i = 0; i < count; i++) {
+      if (contactNames[i]) lines.push(`- **Nimi:** ${contactNames[i]}`);
+      if (contactEmails[i]) lines.push(`- **Sähköposti:** ${contactEmails[i]}`);
+      if (contactPhones[i]) lines.push(`- **Puhelin:** ${contactPhones[i]}`);
+      lines.push("");
+    }
   }
 
   if (urls.length > 0) {
