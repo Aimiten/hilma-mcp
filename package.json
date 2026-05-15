@@ -1,7 +1,7 @@
 {
   "name": "hilma-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for Finnish public procurement notices (Hilma / hankintailmoitukset.fi)",
+  "version": "1.1.0",
+  "description": "MCP server for Finnish public procurement notices (Hilma / hankintailmoitukset.fi). Built by Aimiten — https://aimiten.fi",
   "main": "dist/index.js",
   "bin": {
     "hilma-mcp": "dist/index.js"
@@ -13,13 +13,28 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
+    "claude",
     "hilma",
     "hankintailmoitukset",
     "finland",
-    "procurement"
+    "procurement",
+    "ai",
+    "aimiten"
   ],
-  "author": "Muuan",
+  "author": {
+    "name": "Aimiten Oy",
+    "url": "https://aimiten.fi"
+  },
   "license": "MIT",
+  "homepage": "https://github.com/Aimiten/hilma-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aimiten/hilma-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Aimiten/hilma-mcp/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^17.3.1"
