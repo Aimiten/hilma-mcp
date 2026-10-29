@@ -214,11 +214,11 @@ MIT — ks. [LICENSE](LICENSE).
 
 ## Aimiten
 
-Tämä MCP-serveri on toteutettu osana **[Aimitenin](https://aimiten.fi)** AI-konsultointia. Aimiten Oy auttaa suomalaisia pk-yrityksiä ottamaan tekoälyn (Claude, Copilot, Gemini, n8n) käytäntöön — koulutus, konsultointi ja kevyet Managed Agents -toteutukset.
+Tämä MCP-serveri on toteutettu osana **[Aimitenin](https://aimiten.fi)** AI-konsultointia. Aimiten Oy auttaa keskisuuria ja suuria yrityksiä ja organisaatioita ottamaan tekoälyn (Claude, Copilot, Gemini, n8n) käyttöön: koulutus, konsultointi ja käyttöönotot.
 
 - 🌐 **Verkkosivu:** [aimiten.fi](https://aimiten.fi)
 - 📖 **Claude Code -opas (suomeksi):** [aimiten.fi/oppaat/claude-ai](https://aimiten.fi/oppaat/claude-ai)
 - 🛠️ **MCP-palvelimet & integraatiot:** [aimiten.fi/palvelut](https://aimiten.fi/palvelut)
 - 👤 **Tekijät:** Sampsa Sironen (CEO) + Ville Grönlund (Co-Founder)
 
-This MCP server is built and maintained by **[Aimiten](https://aimiten.fi)**, a Finnish AI consultancy specializing in Claude, Copilot, and Gemini integrations for SMEs.
+This MCP server is built and maintained by **[Aimiten](https://aimiten.fi)**, a Finnish AI consultancy for mid-sized and large companies and organizations, specializing in Claude, Copilot and Gemini.
